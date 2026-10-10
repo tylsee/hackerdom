@@ -1,0 +1,109 @@
+{
+  "analysis": {
+    "status": "ready",
+    "model": "gemini-3.5-flash",
+    "errorCode": null,
+    "startedAt": "2026-10-10T19:28:11.748Z",
+    "updatedAt": "2026-10-10T19:28:38.538Z",
+    "completedAt": "2026-10-10T19:28:38.538Z",
+    "stepCount": 5
+  },
+  "steps": [
+    {
+      "id": "6d656b84-d92e-41f1-9632-6bb94df8af7d",
+      "stepNumber": 1,
+      "order": 1,
+      "title": "Create a New Workbook",
+      "instruction": "Open Excel online and create a new blank workbook.",
+      "explanation": "Starting a new workbook provides a clean grid environment to build the data table.",
+      "expectedResult": "A new, blank Excel sheet titled 'Book 3' opens on the screen.",
+      "caption": "Initiate creation of a new Excel workbook.",
+      "evidenceImageIds": [],
+      "videoFrameIds": [
+        "94986e6e-50d1-470e-b962-b713eb72242c",
+        "0dfddbcd-618f-4dc6-88f6-3a21e327cf1e"
+      ],
+      "startTimestampMs": 0,
+      "endTimestampMs": 1981,
+      "supportStatus": "supported",
+      "reviewNote": null
+    },
+    {
+      "id": "3099ffd3-03e9-466b-a8bd-2937d7987b59",
+      "stepNumber": 2,
+      "order": 2,
+      "title": "Enter Table Header Row",
+      "instruction": "In row 1, enter column headers across columns A to E: 'Order ID', 'Customer', 'Product', 'Quantity', and 'Total Price'.",
+      "explanation": "Defining clear headers establishes the structure and content type for each column in the table.",
+      "expectedResult": "Cells A1 through E1 display the specified header labels.",
+      "caption": "Populate the column headers across row 1.",
+      "evidenceImageIds": [],
+      "videoFrameIds": [
+        "26c73c2e-0e64-4627-8337-7e59807d3c4e",
+        "2e693352-a13f-49fb-9510-4358411f0cbd"
+      ],
+      "startTimestampMs": 15851,
+      "endTimestampMs": 29721,
+      "supportStatus": "supported",
+      "reviewNote": null
+    },
+    {
+      "id": "61e91b2b-6497-4042-b194-167e9b0d7138",
+      "stepNumber": 3,
+      "order": 3,
+      "title": "Enter First Data Row",
+      "instruction": "In row 2, enter the order details: Order ID 'ORD-1001', Customer 'Acme Corp', Product 'Widget A', Quantity '50', and Total Price '$250.00'.",
+      "explanation": "Populating row 2 enters the initial data record into the spreadsheet.",
+      "expectedResult": "Row 2 displays all values for the first order entry.",
+      "caption": "Fill in data for the first order in row 2.",
+      "evidenceImageIds": [],
+      "videoFrameIds": [
+        "a7fc1304-7860-424c-be72-487166028036",
+        "94399c7e-463a-49f1-866e-a87d2c1876e9",
+        "d216f354-eae7-4f3f-8c0a-3c0268f38419"
+      ],
+      "startTimestampMs": 43590,
+      "endTimestampMs": 71330,
+      "supportStatus": "supported",
+      "reviewNote": null
+    },
+    {
+      "id": "1fcce1ae-06ab-498e-80ae-5a74569d227c",
+      "stepNumber": 4,
+      "order": 4,
+      "title": "Enter Second Data Row",
+      "instruction": "In row 3, enter the order details: Order ID 'ORD-2002', Customer 'ABC', Product 'Widget B', Quantity '100', and Total Price '$500.00'.",
+      "explanation": "Adding row 3 appends the second order record to the dataset.",
+      "expectedResult": "Row 3 displays all values for the second order entry.",
+      "caption": "Fill in data for the second order in row 3.",
+      "evidenceImageIds": [],
+      "videoFrameIds": [
+        "795a416a-250c-4acd-b413-21404a691af3",
+        "88851580-4e1f-4063-916d-51b20ae70688"
+      ],
+      "startTimestampMs": 85199,
+      "endTimestampMs": 99069,
+      "supportStatus": "supported",
+      "reviewNote": null
+    },
+    {
+      "id": "3208e852-81a1-4c9d-a49e-db48bec708df",
+      "stepNumber": 5,
+      "order": 5,
+      "title": "Enter Third Data Row",
+      "instruction": "In row 4, enter the order details: Order ID 'ORD-2003', Customer 'DEF', Product 'Widget C', Quantity '200', and Total Price '$1,000.00'.",
+      "explanation": "Adding row 4 appends the third order record to complete the data table.",
+      "expectedResult": "Row 4 displays all values for the third order entry.",
+      "caption": "Fill in data for the third order in row 4.",
+      "evidenceImageIds": [],
+      "videoFrameIds": [
+        "f0ce5fb3-0d50-448b-9c42-15687e791a6a",
+        "37c4a9a4-bbd0-44e7-9e80-ff912e63f4f8"
+      ],
+      "startTimestampMs": 112939,
+      "endTimestampMs": 116902,
+      "supportStatus": "supported",
+      "reviewNote": null
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Python backend
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editor and OS files
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Uploaded evidence and local database
+storage/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Test coverage
+coverage/
+
+# macOS ZIP metadata
+__MACOSX/
