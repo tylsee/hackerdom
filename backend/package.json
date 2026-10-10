@@ -1,0 +1,32 @@
+{
+  "name": "docuai-backend",
+  "version": "0.7.0",
+  "private": true,
+  "description": "DocuAI backend REST API — milestone 7 private DOCX template integration",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "node --check src/app.js && node --check src/server.js && node --check src/config/env.js && node --check src/db/database.js && node --check src/db/migrations.js && node --check src/models/job-repository.js && node --check src/services/job-service.js && node --check src/schemas/job.js && node --check src/routes/jobs.js && node --check src/models/screenshot-repository.js && node --check src/services/screenshot-service.js && node --check src/routes/screenshots.js && node --check src/models/video-repository.js && node --check src/services/video-service.js && node --check src/routes/video.js && node --check src/models/analysis-repository.js && node --check src/services/analysis-service.js && node --check src/services/gemini-analyzer.js && node --check src/schemas/analysis.js && node --check src/routes/analysis.js && node --check src/models/document-repository.js && node --check src/services/document-service.js && node --check src/schemas/document.js && node --check src/routes/document.js && node --check src/models/template-repository.js && node --check src/services/docx-template-parser.js && node --check src/services/template-service.js && node --check src/routes/templates.js"
+  },
+  "dependencies": {
+    "@google/genai": "^1.0.0",
+    "better-sqlite3": "13.0.3",
+    "cors": "2.8.6",
+    "dotenv": "18.0.7",
+    "express": "5.3.0",
+    "helmet": "8.3.0",
+    "multer": "^2.0.2",
+    "sharp": "^0.35.5",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "supertest": "7.3.1",
+    "vitest": "5.0.3"
+  }
+}

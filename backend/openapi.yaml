@@ -1,0 +1,937 @@
+openapi: 3.0.3
+info:
+  title: DocuAI Backend
+  version: 0.7.0
+  description: |
+    Milestones 1-6. SQLite jobs, authenticated screenshots and video recording uploads,
+    FFmpeg frame preparation, chronological evidence, and Gemini screenshot/frame analysis.
+    AI-generated steps require human review; video time ranges are estimates, not precise action boundaries.
+    Milestone 6 adds authenticated, persistent document drafts assembled deterministically
+    from completed AI analysis and user-supplied metadata, with one cited evidence image per step.
+    Document templates, manual step editing, independent audit and DOCX export are not implemented.
+    Job creation is public for the local prototype; registered-user authentication is not implemented.
+servers:
+  - url: http://127.0.0.1:3000
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: HTTP process liveness (not dependency readiness)
+      responses:
+        '200':
+          description: Process can answer HTTP requests
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status, service, version, timestamp, uptimeSeconds]
+                properties:
+                  status: { type: string, enum: [ok] }
+                  service: { type: string, enum: [docuai-backend] }
+                  version: { type: string, example: '0.7.0' }
+                  timestamp: { type: string, format: date-time }
+                  uptimeSeconds: { type: integer, minimum: 0 }
+        '403': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+    head:
+      operationId: headHealth
+      summary: Process liveness without response body
+      responses:
+        '200':
+          description: Process can answer HTTP requests
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+        '403': { description: Unlisted Origin; no HEAD response body }
+        '500': { description: Unexpected failure; no HEAD response body }
+  /api/jobs:
+    post:
+      operationId: createJob
+      summary: Save preferences and metadata in a new job
+      description: |
+        Returns a random per-job bearer token once. Only its hash is stored.
+        Save the token privately; recovery, expiry, rotation and idempotency keys are not implemented.
+        Metadata is user-supplied, never implicitly visually verified.
+        POST is not idempotent: retry after a lost response creates another job.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateJob' }
+            example:
+              preferences: { writingTone: academic, documentType: lab_report, inputType: screenshots }
+              metadata:
+                title: Software installation practical
+                objectives: [Record observed installation steps]
+      responses:
+        '201':
+          description: Job committed atomically; token is returned only here
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Location:
+              description: Relative retrieval URL; still requires matching bearer token
+              schema: { type: string, example: '/api/jobs/74b62eef-8cc9-42bc-8353-ab1f0a545860' }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [job, accessToken]
+                properties:
+                  job: { $ref: '#/components/schemas/Job' }
+                  accessToken:
+                    type: string
+                    minLength: 43
+                    maxLength: 43
+                    pattern: '^[A-Za-z0-9_-]{43}$'
+                    description: Sensitive bearer capability; never put in URLs or logs
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getJob
+      summary: Retrieve one job with its matching bearer token
+      security: [{ JobBearer: [] }]
+      description: |
+        Missing/malformed authorization returns 401 before UUID validation.
+        With well-formed authorization, malformed UUID returns 400.
+        Unknown valid UUID and wrong/cross-job token share a 404 response.
+        Read responses never include the token, hash or internal paths.
+      responses:
+        '200':
+          description: Saved job and metadata
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [job]
+                properties:
+                  job: { $ref: '#/components/schemas/Job' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+    patch:
+      operationId: updateJob
+      summary: Update preferences or metadata of an authorized job
+      security: [{ JobBearer: [] }]
+      description: |
+        Partial updates retain unspecified fields; nullable metadata can be cleared
+        with null and objectives can be replaced by an empty array. At least one
+        nonempty preferences or metadata object is required. Update is rejected
+        with 409 when the job is processing; job status is never client-editable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PatchJob' }
+            example:
+              preferences: { inputType: video }
+              metadata: { title: Updated title, objectives: [Record visible steps] }
+      responses:
+        '200':
+          description: Persisted, updated job
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [job]
+                properties:
+                  job: { $ref: '#/components/schemas/Job' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteJob
+      summary: Permanently delete an authorized job and its SQLite child records
+      security: [{ JobBearer: [] }]
+      description: |
+        DELETE returns 204 with no body. Job metadata and screenshot rows cascade in
+        SQLite, and stored screenshot files are removed from private local storage.
+        Deletion during processing is rejected with 409.
+      responses:
+        '204': { description: Job deleted; empty body }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+    head:
+      operationId: headJob
+      summary: Token-protected job retrieval headers without body
+      security: [{ JobBearer: [] }]
+      responses:
+        '200': { description: Job accessible; no body }
+        '400': { description: Invalid UUID; no body }
+        '401': { description: Missing or malformed token; no body }
+        '403': { description: Unlisted Origin; no body }
+        '404': { description: Job absent or access denied; no body }
+        '500': { description: Unexpected failure; no body }
+  /api/jobs/{id}/screenshots:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listScreenshots
+      summary: List ordered evidence images for an authorized job
+      security: [{ JobBearer: [] }]
+      responses:
+        '200':
+          description: Screenshots sorted by explicit chronological order
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [screenshots]
+                properties:
+                  screenshots: { type: array, items: { $ref: '#/components/schemas/Screenshot' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: uploadScreenshots
+      summary: Add one or more screenshots to a screenshot-input job
+      security: [{ JobBearer: [] }]
+      description: |
+        Exactly the order of multipart `screenshots` file parts is preserved. Up to
+        12 screenshots total per job, 5 MiB source limit each. PNG/JPEG/WebP
+        only. The server validates and converts images to private PNG files.
+        Job status changes from created to uploaded after successful commit.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [screenshots]
+              properties:
+                screenshots:
+                  type: array
+                  minItems: 1
+                  maxItems: 12
+                  items: { type: string, format: binary }
+      responses:
+        '201':
+          description: Evidence stored and persisted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobId, status, screenshots]
+                properties:
+                  jobId: { type: string, format: uuid }
+                  status: { type: string, enum: [uploaded] }
+                  screenshots: { type: array, items: { $ref: '#/components/schemas/Screenshot' } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/screenshots/order:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    patch:
+      operationId: reorderScreenshots
+      summary: Set an exact permutation of all uploaded screenshot IDs
+      security: [{ JobBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [imageIds]
+              properties:
+                imageIds:
+                  type: array
+                  maxItems: 12
+                  items: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Newly ordered image records
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [screenshots]
+                properties:
+                  screenshots: { type: array, items: { $ref: '#/components/schemas/Screenshot' } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/screenshots/{imageId}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      - { in: path, name: imageId, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: retrieveScreenshot
+      summary: Retrieve real PNG evidence bytes with a matching job token
+      security: [{ JobBearer: [] }]
+      responses:
+        '200':
+          description: Private PNG evidence data
+          content:
+            image/png: { schema: { type: string, format: binary } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteScreenshot
+      summary: Remove a screenshot and renumber remaining images
+      security: [{ JobBearer: [] }]
+      responses:
+        '200':
+          description: Remaining ordered images
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [screenshots]
+                properties:
+                  screenshots: { type: array, items: { $ref: '#/components/schemas/Screenshot' } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/video:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: uploadScreenRecording
+      summary: Upload one authenticated MP4, MOV, or WebM screen recording
+      security: [{ JobBearer: [] }]
+      description: |
+        Available only for inputType=video and job status=created. Validates the real
+        video container with ffprobe. Returns HTTP 202 when the recording is persisted;
+        frame extraction runs asynchronously and is resumable after a server restart.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [video]
+              additionalProperties: false
+              properties:
+                video:
+                  type: string
+                  format: binary
+                  description: Max 80 MiB, 180 s, resolution at most 4096x2160.
+      responses:
+        '202':
+          description: Video saved, frame preparation scheduled
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobId, video]
+                properties:
+                  jobId: { type: string, format: uuid }
+                  video: { $ref: '#/components/schemas/Video' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+    get:
+      operationId: getScreenRecordingStatus
+      summary: Fetch video metadata, processing status and chronological sampled frames
+      security: [{ JobBearer: [] }]
+      responses:
+        '200':
+          description: Video is null before upload, otherwise includes frame processing state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [video]
+                properties:
+                  video:
+                    nullable: true
+                    allOf:
+                      - { $ref: '#/components/schemas/Video' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteScreenRecording
+      summary: Delete processed video and its frames, returning the job to created
+      security: [{ JobBearer: [] }]
+      description: Cannot delete while frame extraction is queued or processing.
+      responses:
+        '204': { description: Recording and its frames deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/video/file:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: downloadOriginalRecording
+      summary: Download the original privately stored video with job bearer authorization
+      security: [{ JobBearer: [] }]
+      responses:
+        '200':
+          description: Original video bytes
+          content:
+            video/mp4: { schema: { type: string, format: binary } }
+            video/quicktime: { schema: { type: string, format: binary } }
+            video/webm: { schema: { type: string, format: binary } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/video/frames/{frameId}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      - { in: path, name: frameId, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: downloadVideoFrame
+      summary: Download a real extracted PNG frame, available when processingStatus=ready
+      security: [{ JobBearer: [] }]
+      responses:
+        '200':
+          description: Timestamped sampled frame bytes
+          content:
+            image/png: { schema: { type: string, format: binary } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/analyze:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: startAnalysis
+      summary: Start asynchronous Gemini analysis from already-uploaded evidence
+      description: |
+        Requires the job bearer token, Gemini configuration, and ready evidence.
+        Only one completed analysis per job; failed analyses may be retried.
+        This endpoint accepts an empty body or {} and returns 202 immediately.
+      security: [{ JobBearer: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        '202':
+          description: Analysis accepted, running in a background task
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  analysis: { $ref: '#/components/schemas/Analysis' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/analysis:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getAnalysis
+      summary: Poll asynchronous analysis status
+      security: [{ JobBearer: [] }]
+      responses:
+        '200':
+          description: Current analysis or null before first run
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  analysis:
+                    oneOf:
+                      - { $ref: '#/components/schemas/Analysis' }
+                      - { type: 'null' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/document:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: generateDocumentDraft
+      summary: Generate a persistent SOP/tutorial/manual/lab-report draft from ready analysis
+      description: |
+        Deterministic composition; DOES NOT call Gemini again. Requires analysis status ready.
+        Defaults to refusing replacement (409). Set regenerate=true explicitly to replace a
+        previously generated snapshot and increase its revision. Only job-owner bearer tokens
+        can access drafts. Evidence references point to private authenticated media endpoints.
+      security: [{ JobBearer: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                regenerate: { type: boolean, default: false }
+      responses:
+        '201':
+          description: First document draft created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [document]
+                properties:
+                  document: { $ref: '#/components/schemas/DocumentDraft' }
+        '200':
+          description: Draft explicitly regenerated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [document]
+                properties:
+                  document: { $ref: '#/components/schemas/DocumentDraft' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+    get:
+      operationId: getDocumentDraft
+      summary: Retrieve the saved document draft for this job
+      security: [{ JobBearer: [] }]
+      responses:
+        '200':
+          description: Stored structured document snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [document]
+                properties:
+                  document: { $ref: '#/components/schemas/DocumentDraft' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/template:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getJobTemplate
+      summary: Read uploaded DOCX template profile or the default profile
+      security: [{ JobBearer: [] }]
+      responses:
+        '200':
+          description: Private template metadata and extracted heading styles; never file contents
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [template]
+                properties:
+                  template: { type: object, description: Default or uploaded template metadata }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: uploadJobTemplate
+      summary: Upload or replace a private DOCX Word template, at most 8 MiB
+      description: |
+        Accepts a DOCX as multipart field `template`. Validates the ZIP/OOXML package,
+        extracts heading styles and visible heading text, and stores the original
+        bytes privately for later export. Existing document draft remains unchanged.
+        This does not generate or export Word documents yet.
+      security: [{ JobBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [template]
+              properties:
+                template: { type: string, format: binary }
+      responses:
+        '201': { description: Template uploaded/replaced; metadata returned }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteJobTemplate
+      summary: Delete a custom template and revert to the default style profile
+      security: [{ JobBearer: [] }]
+      responses:
+        '200': { description: Default template profile returned }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/template/file:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: downloadOriginalJobTemplate
+      summary: Download the original private DOCX template; requires job bearer
+      security: [{ JobBearer: [] }]
+      responses:
+        '200':
+          description: The originally uploaded DOCX bytes; not a generated document
+          content:
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/document/layout:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getDocumentTemplateLayout
+      summary: Preview heading/style mapping between saved draft and uploaded/default template
+      description: |
+        Applies template heading labels/style IDs to a copy of the already saved JSON draft.
+        Content, citations, selected frame references and review flags are preserved.
+        The layout plan is not a rendered DOCX or a guarantee of identical template layout.
+      security: [{ JobBearer: [] }]
+      responses:
+        '200':
+          description: Non-destructive layout preview
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [layout]
+                properties:
+                  layout: { type: object }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/jobs/{id}/steps:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getAnalysisSteps
+      summary: Read generated, evidence-linked procedural steps
+      description: Empty until analysis reaches ready; these steps are not independently audited.
+      security: [{ JobBearer: [] }]
+      responses:
+        '200':
+          description: Ordered steps and analysis status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  analysis:
+                    oneOf:
+                      - { $ref: '#/components/schemas/Analysis' }
+                      - { type: 'null' }
+                  steps: { type: array, items: { $ref: '#/components/schemas/AnalysisStep' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    JobBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: '256-bit base64url per-job capability (43 characters)'
+  headers:
+    RequestId:
+      description: Server-generated correlation ID
+      schema: { type: string, format: uuid }
+    NoStore:
+      schema: { type: string, enum: [no-store] }
+  responses:
+    Error:
+      description: |
+        Structured sanitized error. Codes include VALIDATION_ERROR, INVALID_JOB_ID,
+        INVALID_JSON, INVALID_REQUEST_BODY, CORS_ORIGIN_DENIED, JOB_NOT_FOUND, NOT_FOUND,
+        PAYLOAD_TOO_LARGE, UNSUPPORTED_MEDIA_TYPE, UNSUPPORTED_ENCODING, DATABASE_BUSY,
+        JOB_PROCESSING, WRONG_INPUT_TYPE, INVALID_IMAGE,
+        SCREENSHOT_LIMIT_EXCEEDED, INVALID_SCREENSHOT_ORDER, INTERNAL_SERVER_ERROR. See README for status mappings.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthorized:
+      description: Missing or malformed bearer authorization
+      headers:
+        WWW-Authenticate:
+          schema: { type: string, example: 'Bearer realm="docuai-job"' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+  schemas:
+    DocumentEvidence:
+      type: object
+      required: [id, kind, order, timestampMs, retrievalPath]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [screenshot, video_frame] }
+        order: { type: integer, minimum: 1 }
+        timestampMs: { type: integer, minimum: 0, nullable: true }
+        retrievalPath:
+          type: string
+          description: Relative path; must be fetched using the job bearer token, not a public img URL.
+    DocumentStep:
+      type: object
+      required: [sourceStepId, number, title, instruction, explanation, expectedResult, caption,
+        supportStatus, reviewNote, startTimestampMs, endTimestampMs, selectedEvidence]
+      properties:
+        sourceStepId: { type: string, format: uuid }
+        number: { type: integer, minimum: 1 }
+        title: { type: string }
+        instruction: { type: string }
+        explanation: { type: string }
+        expectedResult: { type: string, nullable: true }
+        caption: { type: string }
+        supportStatus: { type: string, enum: [supported, needs_review, unsupported] }
+        reviewNote: { type: string, nullable: true }
+        startTimestampMs: { type: integer, minimum: 0, nullable: true }
+        endTimestampMs: { type: integer, minimum: 0, nullable: true }
+        selectedEvidence:
+          oneOf:
+            - { $ref: '#/components/schemas/DocumentEvidence' }
+            - { type: 'null' }
+    DocumentSection:
+      oneOf:
+        - type: object
+          required: [kind, heading, paragraphs]
+          properties:
+            kind: { type: string, enum: [text] }
+            heading: { type: string }
+            paragraphs: { type: array, items: { type: string } }
+        - type: object
+          required: [kind, heading, steps]
+          properties:
+            kind: { type: string, enum: [procedure] }
+            heading: { type: string }
+            steps: { type: array, items: { $ref: '#/components/schemas/DocumentStep' } }
+        - type: object
+          required: [kind, heading, notes]
+          properties:
+            kind: { type: string, enum: [review] }
+            heading: { type: string }
+            notes:
+              type: array
+              items:
+                type: object
+                required: [stepNumber, supportStatus, note]
+                properties:
+                  stepNumber: { type: integer, minimum: 1 }
+                  supportStatus: { type: string, enum: [needs_review, unsupported] }
+                  note: { type: string }
+    DocumentDraft:
+      type: object
+      required: [id, jobId, revision, status, analysisCompletedAt, createdAt, updatedAt, title,
+        documentType, writingTone, sourceInputType, sections, stepCount, reviewCount]
+      properties:
+        id: { type: string, format: uuid }
+        jobId: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        status: { type: string, enum: [ready] }
+        analysisCompletedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        title: { type: string }
+        documentType: { type: string, enum: [sop, tutorial, user_manual, lab_report] }
+        writingTone: { type: string, enum: [academic, professional] }
+        sourceInputType: { type: string, enum: [screenshots, video] }
+        sections: { type: array, items: { $ref: '#/components/schemas/DocumentSection' } }
+        stepCount: { type: integer, minimum: 1 }
+        reviewCount: { type: integer, minimum: 0 }
+    Analysis:
+      type: object
+      required: [status, model, errorCode, startedAt, updatedAt, completedAt, stepCount]
+      properties:
+        status: { type: string, enum: [queued, processing, ready, failed] }
+        model: { type: string }
+        errorCode: { type: string, nullable: true }
+        startedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time, nullable: true }
+        stepCount: { type: integer, minimum: 0 }
+    AnalysisStep:
+      type: object
+      required: [id, stepNumber, order, title, instruction, explanation, expectedResult, caption,
+        evidenceImageIds, videoFrameIds, startTimestampMs, endTimestampMs, supportStatus, reviewNote]
+      properties:
+        id: { type: string, format: uuid }
+        stepNumber: { type: integer, minimum: 1 }
+        order: { type: integer, minimum: 1 }
+        title: { type: string }
+        instruction: { type: string }
+        explanation: { type: string }
+        expectedResult: { type: string, nullable: true }
+        caption: { type: string }
+        evidenceImageIds: { type: array, items: { type: string, format: uuid } }
+        videoFrameIds: { type: array, items: { type: string, format: uuid } }
+        startTimestampMs: { type: integer, nullable: true, minimum: 0 }
+        endTimestampMs: { type: integer, nullable: true, minimum: 0 }
+        supportStatus: { type: string, enum: [supported, needs_review, unsupported] }
+        reviewNote: { type: string, nullable: true }
+    VideoFrame:
+      type: object
+      required: [id, order, timestampMs, width, height, byteSize, sha256]
+      properties:
+        id: { type: string, format: uuid }
+        order: { type: integer, minimum: 1, maximum: 60 }
+        timestampMs: { type: integer, minimum: 0, description: Estimated sample time, not step boundary }
+        width: { type: integer, minimum: 1 }
+        height: { type: integer, minimum: 1 }
+        byteSize: { type: integer, minimum: 1 }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+    Video:
+      type: object
+      required: [id, mimeType, byteSize, durationMs, width, height, processingStatus, errorCode, frames, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        mimeType: { type: string, enum: [video/mp4, video/quicktime, video/webm] }
+        byteSize: { type: integer, minimum: 1, maximum: 83886080 }
+        durationMs: { type: integer, minimum: 1, maximum: 180000 }
+        width: { type: integer, minimum: 1 }
+        height: { type: integer, minimum: 1 }
+        processingStatus: { type: string, enum: [queued, processing, ready, failed] }
+        errorCode: { type: string, nullable: true }
+        frames:
+          type: array
+          items: { $ref: '#/components/schemas/VideoFrame' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Screenshot:
+      type: object
+      additionalProperties: false
+      required: [id, order, mimeType, byteSize, width, height, sha256, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        order: { type: integer, minimum: 1, maximum: 12 }
+        mimeType: { type: string, enum: [image/png] }
+        byteSize: { type: integer, minimum: 1, maximum: 20971520 }
+        width: { type: integer, minimum: 1 }
+        height: { type: integer, minimum: 1 }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        createdAt: { type: string, format: date-time }
+    Preferences:
+      type: object
+      additionalProperties: false
+      required: [writingTone, documentType, inputType]
+      properties:
+        writingTone: { type: string, enum: [academic, professional] }
+        documentType: { type: string, enum: [sop, user_manual, tutorial, lab_report] }
+        inputType: { type: string, enum: [screenshots, video] }
+    CreatePreferences:
+      type: object
+      additionalProperties: false
+      required: [writingTone, documentType]
+      properties:
+        writingTone: { type: string, enum: [academic, professional] }
+        documentType: { type: string, enum: [sop, user_manual, tutorial, lab_report] }
+        inputType: { type: string, enum: [screenshots, video], default: screenshots }
+    PatchJob:
+      type: object
+      additionalProperties: false
+      description: At least one nonempty nested object must be included.
+      anyOf:
+        - required: [preferences]
+        - required: [metadata]
+      properties:
+        preferences:
+          type: object
+          additionalProperties: false
+          minProperties: 1
+          properties:
+            writingTone: { type: string, enum: [academic, professional] }
+            documentType: { type: string, enum: [sop, user_manual, tutorial, lab_report] }
+            inputType: { type: string, enum: [screenshots, video] }
+        metadata:
+          allOf:
+            - { $ref: '#/components/schemas/MetadataInput' }
+            - { type: object, minProperties: 1 }
+    MetadataInput:
+      type: object
+      additionalProperties: false
+      properties:
+        title: { type: string, nullable: true, minLength: 1, maxLength: 200 }
+        processDescription: { type: string, nullable: true, minLength: 1, maxLength: 4000 }
+        intendedAudience: { type: string, nullable: true, minLength: 1, maxLength: 500 }
+        objectives:
+          type: array
+          maxItems: 20
+          default: []
+          items: { type: string, minLength: 1, maxLength: 500 }
+        additionalContext: { type: string, nullable: true, minLength: 1, maxLength: 8000 }
+        specialRequirements: { type: string, nullable: true, minLength: 1, maxLength: 4000 }
+    CreateJob:
+      type: object
+      additionalProperties: false
+      required: [preferences]
+      properties:
+        preferences: { $ref: '#/components/schemas/CreatePreferences' }
+        metadata: { $ref: '#/components/schemas/MetadataInput' }
+    Job:
+      type: object
+      additionalProperties: false
+      required: [id, status, createdAt, updatedAt, preferences, metadata]
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [created, uploaded, processing, ready, failed]
+          description: Screenshot uploads change created to uploaded; future workers implement processing, ready and failed.
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        preferences: { $ref: '#/components/schemas/Preferences' }
+        metadata:
+          type: object
+          additionalProperties: false
+          required: [title, processDescription, intendedAudience, objectives, additionalContext, specialRequirements, source]
+          properties:
+            title: { type: string, nullable: true, maxLength: 200 }
+            processDescription: { type: string, nullable: true, maxLength: 4000 }
+            intendedAudience: { type: string, nullable: true, maxLength: 500 }
+            objectives:
+              type: array
+              maxItems: 20
+              items: { type: string, maxLength: 500 }
+            additionalContext: { type: string, nullable: true, maxLength: 8000 }
+            specialRequirements: { type: string, nullable: true, maxLength: 4000 }
+            source: { type: string, enum: [user_supplied] }
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, requestId]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            requestId: { type: string, format: uuid }
